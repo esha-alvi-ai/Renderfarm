@@ -1,27 +1,55 @@
-// Handles user ZIP upload → saves to storage → responds with file path
+// backend/src/api/controllers/uploadController.js
 
 const path = require("path");
 const fs = require("fs");
-const { uploadToStorage } = require("../../services/storage/storageService");
+const Job = require("../../db/models/Job");
 
-exports.uploadProjectZip = async (req, res) => {
+// ================================
+// Upload JSON/Files
+// ================================
+exports.uploadFile = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+    if (!req.file)
+      return res.status(400).json({ message: "No file uploaded" });
 
-    const filePath = req.file.path;
-
-    // Upload file to S3 / local storage
-    const storageLocation = await uploadToStorage(filePath);
-
-    return res.status(200).json({
-      message: "File uploaded successfully",
-      storageLocation
+    return res.json({
+      message: "File uploaded",
+      filePath: req.file.path,
     });
 
-  } catch (error) {
-    console.error("Upload Error:", error);
-    return res.status(500).json({ error: "File upload failed" });
+  } catch (err) {
+    console.error("Upload Error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// ================================
+// Upload JSON Template and create job
+// ================================
+exports.uploadJsonTemplate = async (req, res) => {
+  try {
+    const { jobId, totalFrames, framePerTask } = req.body;
+
+    if (!req.file)
+      return res.status(400).json({ message: "No JSON uploaded" });
+
+    const jsonContent = JSON.parse(fs.readFileSync(req.file.path, "utf8"));
+
+    const job = await Job.create({
+      jobId,
+      projectPath: req.file.path,
+      jsonTemplate: jsonContent,
+      totalFrames,
+      framePerTask,
+    });
+
+    return res.json({
+      message: "Template uploaded and job created",
+      job,
+    });
+
+  } catch (err) {
+    console.error("Template Upload Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
