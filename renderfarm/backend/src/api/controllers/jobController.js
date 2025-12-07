@@ -1,53 +1,94 @@
-// Creates job → extracts metadata → updates JSON template → chunks frames → schedules tasks
+// backend/src/api/controllers/jobController.js
 
-const {
-  extractMetadata
-} = require("../../services/metadata-extractor/metadataExtractor");
+const Job = require("../../db/models/Job");
+const Task = require("../../db/models/Task");
+const Worker = require("../../db/models/Worker");
 
-const {
-  loadDefaultTemplate,
-  updateTemplate
-} = require("../../core/json-template/templateUpdater");
-
-const {
-  generateChunks
-} = require("../../core/chunker/chunkGenerator");
-
-const {
-  queueTasks
-} = require("../../core/scheduler/taskScheduler");
-
-exports.createRenderJob = async (req, res) => {
+// ================================
+// Create a new Job
+// ================================
+exports.createJob = async (req, res) => {
   try {
-    const { storageLocation, compName } = req.body;
+    const { jobId, projectPath, jsonTemplate, totalFrames, framePerTask } = req.body;
 
-    // 1. Extract metadata from uploaded project
-    const metadata = await extractMetadata(storageLocation);
-
-    // 2. Load default template JSON
-    const template = await loadDefaultTemplate();
-
-    // 3. Apply user + metadata values into template
-    const updatedTemplate = await updateTemplate(template, metadata, req.body);
-
-    // 4. Generate chunks (distributed tasks)
-    const chunks = generateChunks(
-      updatedTemplate.renderSettings.startFrame,
-      updatedTemplate.renderSettings.endFrame,
-      updatedTemplate.renderSettings.chunkSize
-    );
-
-    // 5. Queue tasks for workers
-    await queueTasks(chunks, updatedTemplate);
-
-    return res.status(200).json({
-      message: "Render job created successfully",
-      job: updatedTemplate,
-      chunks
+    const job = await Job.create({
+      jobId,
+      projectPath,
+      jsonTemplate,
+      totalFrames,
+      framePerTask,
     });
 
-  } catch (error) {
-    console.error("Job Creation Error:", error);
-    return res.status(500).json({ error: "Failed to create job" });
+    return res.json({
+      message: "Job created successfully",
+      job,
+    });
+
+  } catch (err) {
+    console.error("Job Creation Error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// ================================
+// Update job status (queued, processing, completed)
+// ================================
+exports.updateJobStatus = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { status } = req.body;
+
+    const job = await Job.findOneAndUpdate(
+      { jobId },
+      { status },
+      { new: true }
+    );
+
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
+    return res.json({
+      message: "Status updated",
+      job,
+    });
+
+  } catch (err) {
+    console.error("Status Update Error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// ================================
+// Submit job result from worker
+// ================================
+exports.submitJobResult = async (req, res) => {
+  try {
+    const { taskId, outputPath } = req.body;
+
+    const task = await Task.findOneAndUpdate(
+      { taskId },
+      { status: "completed", outputPath },
+      { new: true }
+    );
+
+    if (!task) return res.status(404).json({ message: "Task not found" });
+
+    // Check if all tasks of this job are done
+    const unfinished = await Task.count({
+      jobId: task.jobId,
+      status: { $ne: "completed" }
+    });
+
+    if (unfinished === 0) {
+      await Job.findByIdAndUpdate(task.jobId, { status: "completed" });
+    }
+
+    return res.json({
+      message: "Result submitted successfully",
+      task,
+    });
+
+  } catch (err) {
+    console.error("Job Result Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
